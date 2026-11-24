@@ -50,7 +50,20 @@ const createTokensAndSession = async (userId) => {
 // Implementation
 const register = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { name, address = "", email, password } = req.body;
+
+    if (
+      typeof name !== "string" ||
+      !name.trim() ||
+      name.trim().length > 100 ||
+      typeof address !== "string" ||
+      address.trim().length > 250
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Provide a name (up to 100 characters) and an address (up to 250 characters)",
+      });
+    }
 
     if (!validEmail(email) || !validPassword(password)) {
       return res.status(400).json({
@@ -73,6 +86,8 @@ const register = async (req, res, next) => {
     const hashedPassword = await bcrypt.hash(password, 12);
 
     await User.create({
+      name: name.trim(),
+      address: address.trim(),
       email: email.toLowerCase(),
       password: hashedPassword,
     });
@@ -119,6 +134,8 @@ const login = async (req, res, next) => {
       accessToken,
       user: {
         id: user.id,
+        name: user.name,
+        address: user.address,
         email: user.email,
       },
     });
@@ -150,7 +167,7 @@ const refresh = async (req, res, next) => {
         message: "Invalid or expired refresh token",
       });
     }
-
+    console.log('Payload:',payload);
     if (payload.type !== "refresh" || !payload.jti) {
       res.clearCookie("refreshToken", refreshCookieOptions);
 
@@ -233,6 +250,8 @@ const getMe = async (req, res, next) => {
       success: true,
       user: {
         id: user.id,
+        name: user.name,
+        address: user.address,
         email: user.email,
         createdAt: user.createdAt,
       },
