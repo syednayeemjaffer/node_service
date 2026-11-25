@@ -8,6 +8,8 @@ const cors = require("cors");
 const connectDatabase = require("./config/db");
 const { connectRedis } = require("./config/redis");
 const authRoutes = require("./routes/auth.routes");
+const productRoutes = require("./routes/product.routes");
+const orderRoutes = require("./routes/order.routes");
 const {
   notFound,
   errorHandler,
@@ -36,6 +38,8 @@ app.get("/health", (req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/orders", orderRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

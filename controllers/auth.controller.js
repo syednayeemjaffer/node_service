@@ -1,5 +1,7 @@
 const User = require("../models/user.model");
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 const { redisClient } = require("../config/redis");
 const {
   createAccessToken,
@@ -30,10 +32,10 @@ function validPassword(password) {
   );
 }
 
-const createTokensAndSession = async (userId) => {
+const createTokensAndSession = async (userId, role) => {
   const sessionId = createSessionId();
 
-  const accessToken = createAccessToken(userId);
+  const accessToken = createAccessToken(userId, role);
   const refreshToken = createRefreshToken(userId, sessionId);
 
   await redisClient.set(
@@ -47,10 +49,48 @@ const createTokensAndSession = async (userId) => {
   return { accessToken, refreshToken };
 };
 
+const registrationOtpKey = (email) => `registration_otp:${email.toLowerCase()}`;
+
+const requestRegistrationOtp = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!validEmail(email)) {
+      return res.status(400).json({ success: false, message: "Provide a valid email" });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    if (await User.exists({ email: normalizedEmail })) {
+      return res.status(409).json({ success: false, message: "Email already exists" });
+    }
+
+    const otp = crypto.randomInt(100000, 1000000).toString();
+    await redisClient.set(registrationOtpKey(normalizedEmail), hashToken(otp), {
+      EX: Number(process.env.REGISTRATION_OTP_TTL_SECONDS || 600),
+    });
+
+    const transport = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: process.env.SMTP_SECURE === "true",
+      auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD } : undefined,
+    });
+    await transport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: normalizedEmail,
+      subject: "Your account verification code",
+      text: `Your verification code is ${otp}. It expires in ${Math.floor(Number(process.env.REGISTRATION_OTP_TTL_SECONDS || 600) / 60)} minutes.`,
+    });
+
+    return res.status(200).json({ success: true, message: "Verification code sent" });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Implementation
 const register = async (req, res, next) => {
   try {
-    const { name, address = "", email, password } = req.body;
+    const { name, address = "", email, password, otp } = req.body;
 
     if (
       typeof name !== "string" ||
@@ -72,8 +112,19 @@ const register = async (req, res, next) => {
       });
     }
 
+    if (typeof otp !== "string" || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ success: false, message: "A valid 6-digit verification code is required" });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const otpKey = registrationOtpKey(normalizedEmail);
+    const storedOtpHash = await redisClient.get(otpKey);
+    if (!storedOtpHash || storedOtpHash !== hashToken(otp)) {
+      return res.status(400).json({ success: false, message: "Invalid or expired verification code" });
+    }
+
     const existingUser = await User.findOne({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
     });
 
     if (existingUser) {
@@ -88,9 +139,10 @@ const register = async (req, res, next) => {
     await User.create({
       name: name.trim(),
       address: address.trim(),
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       password: hashedPassword,
     });
+    await redisClient.del(otpKey);
     res.status(201).json({
       success: true,
       message: "Account created. Please log in.",
@@ -126,7 +178,7 @@ const login = async (req, res, next) => {
       });
     }
 
-    const { accessToken, refreshToken } = await createTokensAndSession(user.id);
+    const { accessToken, refreshToken } = await createTokensAndSession(user.id, user.role);
 
     res.cookie("refreshToken", refreshToken, refreshCookieOptions);
     res.status(200).json({
@@ -137,6 +189,7 @@ const login = async (req, res, next) => {
         name: user.name,
         address: user.address,
         email: user.email,
+        role: user.role,
       },
     });
   } catch (error) {
@@ -193,9 +246,13 @@ const refresh = async (req, res, next) => {
     // Rotation: invalidate the old token before issuing a new one.
     await redisClient.del(key);
 
-    const { accessToken, refreshToken } = await createTokensAndSession(
-      payload.sub,
-    );
+    const user = await User.findById(payload.sub).select("role");
+    if (!user) {
+      await redisClient.del(key);
+      res.clearCookie("refreshToken", refreshCookieOptions);
+      return res.status(401).json({ success: false, message: "User no longer exists" });
+    }
+    const { accessToken, refreshToken } = await createTokensAndSession(user.id, user.role);
 
     res.cookie("refreshToken", refreshToken, refreshCookieOptions);
 
@@ -253,6 +310,7 @@ const getMe = async (req, res, next) => {
         name: user.name,
         address: user.address,
         email: user.email,
+        role: user.role,
         createdAt: user.createdAt,
       },
     });
@@ -263,6 +321,7 @@ const getMe = async (req, res, next) => {
 
 module.exports = {
   register,
+  requestRegistrationOtp,
   login,
   refresh,
   logout,

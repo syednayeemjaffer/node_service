@@ -3,6 +3,7 @@ const rateLimit = require("express-rate-limit");
 
 const {
   register,
+  requestRegistrationOtp,
   login,
   refresh,
   logout,
@@ -24,6 +25,7 @@ const authLimiter = rateLimit({
   },
 });
 
+router.post("/request-registration-otp", authLimiter, requestRegistrationOtp);
 router.post("/register", authLimiter, register);
 router.post("/login", authLimiter, login);
 router.post("/refresh", refresh);
