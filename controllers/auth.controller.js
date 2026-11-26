@@ -179,6 +179,9 @@ const login = async (req, res, next) => {
     }
 
     const { accessToken, refreshToken } = await createTokensAndSession(user.id, user.role);
+    console.log(`Access: ${accessToken}`);
+    console.log(`=================================================================`)
+    console.log(`Refresh: ${refreshToken}`);
 
     res.cookie("refreshToken", refreshToken, refreshCookieOptions);
     res.status(200).json({

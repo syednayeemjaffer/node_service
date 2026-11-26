@@ -25,10 +25,13 @@ const authenticate = (req, res, next) => {
       role: payload.role,
     };
     next();
-  } catch {
+  } catch (error) {
     return res.status(401).json({
       success: false,
-      message: "Invalid or expired access token",
+      message:
+        error.name === "TokenExpiredError"
+          ? "Access token expired; refresh it and try again"
+          : "Invalid access token",
     });
   }
 };
